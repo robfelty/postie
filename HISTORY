@@ -5,6 +5,14 @@ John didn't release any more versions at least up til July 2005. So I started ac
 
 So I decided to make an offical fork. I put up an article on my blog asking for new names. I picked Postie.  I then modified the code to be a proper plugin.  And the rest is history :)
 
+ Version 1.1.2 (robfelty@gmail.com) 2008.07.12
+         - allow negative delays
+         - will glean author information from forwarded or redirected e-mails
+         - replying to an e-mail adds a comment to a post
+         - fixed category handling to work with taxonomy
+         - fixed one syntax error
+         - added option to wrap posts and comments in <pre> tags
+
  Version 1.1.1
   BUGFIX -problem with subject
   BUGFIX -cronless postie typo

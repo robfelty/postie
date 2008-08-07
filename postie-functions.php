@@ -26,47 +26,156 @@ function PostEmail($poster,$mimeDecodedEmail) {
 #    }
     $content = GetContent($mimeDecodedEmail,$attachments);
     $subject = GetSubject($mimeDecodedEmail,$content);
+    echo "the subject is $subject, right after calling GetSubject\n";
     $rotation = GetRotation($mimeDecodedEmail,$content);
     if ($rotation != "0"
             && count($attachments["image_files"])) {
         RotateImages($rotation,$attachments["image_files"]);
     }
     SpecialMessageParsing($content,$attachments);
+    $postAuthorDetails=getPostAuthorDetails($subject,$content,
+        $mimeDecodedEmail);
     $message_date = NULL;
     if (array_key_exists("date",$mimeDecodedEmail->headers)
             && !empty($mimeDecodedEmail->headers["date"])) {
-        $message_date = HandleMessageEncoding($mimeDecodedEmail->headers["content-transfer-encoding"],
+        HandleMessageEncoding($mimeDecodedEmail->headers["content-transfer-encoding"],
                                                $mimeDecodedEmail->ctype_parameters["charset"],
                                                $mimeDecodedEmail->headers["date"]);
+        $message_date = $mimeDecodedEmail->headers['date'];
     }
     list($post_date,$post_date_gmt) = DeterminePostDate($content, $message_date);
 
     ubb2HTML($content);	
 
-    $content = FilterNewLines($content);
+    //$content = FilterNewLines($content);
+    //$content = FixEmailQuotes($content);
     
+    $id=checkReply($subject); 
     $post_categories = GetPostCategories($subject);
+    echo "the subject is $subject, right after calling GetPostCategories\n";
     $comment_status = AllowCommentsOnPost($content);
     
+    if ((empty($id) || is_null($id)) && 
+        $config['ADD_META']=='yes') {
+      if ($config['WRAP_PRE']=='yes') {
+        $content = $postAuthorDetails['content'] . "<pre>\n" . $content . "</pre>\n";
+      } else {
+        $content = $postAuthorDetails['content'] . $content;
+      }
+      echo "id is empty\n";
+    } else {
+      if ($config['WRAP_PRE']=='yes') {
+        $content = "<pre>\n" . $content . "</pre>\n";
+      }
+    }
     $details = array(
         'post_author'		=> $poster,
+        'comment_author'		=> $postAuthorDetails['author'],
+        'email_author'		=> $postAuthorDetails['email'],
         'post_date'			=> $post_date,
         'post_date_gmt'		=> $post_date_gmt,
-        'post_content'		=> preg_replace("/'/","\\'",$content),
-        'post_title'		=> preg_replace("/'/","\\'",$subject),
+        'post_content'		=> addslashes($content),
+        'post_title'		=>  preg_replace("/'/","\\'",$subject),
         'post_modified'		=> $post_date,
         'post_modified_gmt'	=> $post_date_gmt,
         'ping_status' => get_option('default_ping_status'),
-         'post_category' => $post_categories,
+        'post_category' => $post_categories,
         'comment_status' => $comment_status,
         'post_name' => sanitize_title($subject),
+        'ID' => $id,
         'post_status' => 'publish'
     );
-
     DisplayEmailPost($details);
     PostToDB($details); 
 }
 /** FUNCTIONS **/
+
+function getPostAuthorDetails(&$subject,&$content,&$mimeDecodedEmail) {
+    /* we check whether or not the e-mail is a forwards or a redirect. If it is
+    * a fwd, then we glean the author details from the body of the post.
+    * Otherwise we get them from the headers    
+    */
+    
+    global $wpdb;
+    // see if subject starts with Fwd:
+    if (preg_match("/(^Fwd:) (.*)/", $subject, $matches)) {
+        $subject=trim($matches[2]);
+      if (preg_match("/\nfrom:(.*?)\n/i",$content,$matches)) {
+        $theAuthor=GetNameFromEmail($matches[1]);
+        $mimeDecodedEmail->headers['from']=$theAuthor;
+      }
+      if (preg_match("/\ndate:(.*?)\n/i",$content,$matches)) {
+        $theDate=$matches[1];
+        $mimeDecodedEmail->headers['date']=$theDate;
+      }
+    } else {
+      $theDate=$mimeDecodedEmail->headers['date'];
+      $theAuthor=GetNameFromEmail($mimeDecodedEmail->headers['from']);
+      $theEmail = RemoveExtraCharactersInEmailAddress(trim(
+          $mimeDecodedEmail->headers["from"]));
+    }
+    // now get rid of forwarding info in the content
+    $lines=preg_split("/\r\n/",$content);
+    $newContents='';
+    foreach ($lines as $line) {
+      if (preg_match("/^(from|subject|to|date):.*?/i",$line,$matches)==0 && 
+      //    preg_match("/^$/i",$line,$matches)==0 &&
+          preg_match("/^-+\s*forwarded\s*message\s*-+/i",$line,$matches)==0) {
+        $newContents.=preg_replace("/\r/","",$line) . "\n" ;
+      }
+    }
+    $content=$newContents;
+    echo $newContents;
+    $theDetails=array(
+    'content' =>"<div class='postmetadata alt'>On $theDate, $theAuthor" . 
+                 " posted:</div>",
+    'author' => $theAuthor,
+    'email' => $theEmail
+    );
+    return($theDetails);
+}
+function checkReply(&$subject) {
+    /* we check whether or not the e-mail is a reply to a previously
+     * published post. First we check whether it starts with Re:, and then
+     * we see if the remainder matches an already existing post. If so,
+     * then we add that post id to the details array, which will cause the
+     * existing post to be overwritten, instead of a new one being
+     * generated
+    */
+    
+    global $wpdb;
+    // see if subject starts with Re:
+    if (preg_match("/(^Re:) (.*)/", $subject, $matches)) {
+        $subject=trim($matches[2]);
+        // strip out category info into temporary variable
+        $tmpSubject=$subject;
+        if ( preg_match('/(.+): (.*)/', $tmpSubject, $matches))  {
+            $tmpSubject = trim($matches[2]);
+            $matches[1] = array($matches[1]);
+        }
+        else if (preg_match_all('/\[(.[^\[]*)\]/', $tmpSubject, $matches)) {
+            preg_match("/](.[^\[]*)$/",$tmpSubject,$tmpSubject_matches);
+            $tmpSubject = trim($tmpSubject_matches[1]);
+        }
+        else if ( preg_match_all('/-(.[^-]*)-/', $tmpSubject, $matches) ) {
+            preg_match("/-(.[^-]*)$/",$tmpSubject,$tmpSubject_matches);
+            $tmpSubject = trim($tmpSubject_matches[1]);
+        }
+        $checkExistingPostQuery= "SELECT ID FROM $wpdb->posts WHERE 
+            '$tmpSubject' = post_title";
+        echo "query = $checkExistingPostQuery\n";
+        if ($id=$wpdb->get_var($checkExistingPostQuery)) {
+            echo "results = $id\n";
+            if (is_array($id)) {
+                $id=$id[count($id)-1];
+            }
+        } else {
+            $id=NULL;
+        }
+    }
+    return($id);
+}
+
 function postie_read_me() {
     include(POSTIE_ROOT . DIRECTORY_SEPARATOR. "postie_read_me.php");
 }
@@ -271,7 +380,43 @@ function PostToDB($details) {
     if ($config["POST_TO_DB"]) {
         //generate sql for insertion	    
         $_POST['publish'] = true; //Added to make subscribe2 work - it will only handle it if the global varilable _POST is set
-        $post_ID = wp_insert_post($details);
+        if ($details['ID']==NULL) {
+            $post_ID = wp_insert_post($details);
+        } else {
+            // strip out quoted content
+            $lines=preg_split("/[\r\n]/",$details['post_content']);
+            print_r($lines);
+            $newContents='';
+            foreach ($lines as $line) {
+              //$match=preg_match("/^>.*/i",$line);
+              //echo "line=$line,  match=$match";
+              if (preg_match("/^>.*/i",$line)==0 &&
+                 preg_match("/^(from|subject|to|date):.*?/i",$line)==0 && 
+                 preg_match("/^-+.*?(from|subject|to|date).*?/i",$line)==0 && 
+                 preg_match("/^on.*?wrote:$/i",$line)==0 && 
+                 preg_match("/^-+\s*forwarded\s*message\s*-+/i",$line)==0) {
+                $newContents.="$line\n";
+              }
+            }
+            $comment = array(
+            'comment_author'=>$details['comment_author'],
+            'comment_post_ID' =>$details['ID'], 
+            'comment_author_email' => $details['email_author'],
+            'comment_date' =>$details['post_date'],
+            'comment_date_gmt' =>$details['post_date_gmt'], 
+            'comment_content' =>$newContents,
+            'comment_author_url' =>'',
+            'comment_author_IP' =>'',
+            'comment_approved' =>1,
+            'comment_agent' =>'', 
+            'comment_type' =>'', 
+            'comment_parent' => 0
+            );
+
+            echo "the comment is:\n";
+            print_r($comment);
+            $post_ID = wp_insert_comment($comment);
+        }
         //do_action('publish_post', $post_ID); - no longer needed
         //do_action('publish_phone', $post_ID); -- seems to triger a double
 
@@ -633,6 +778,7 @@ function ValidatePoster( &$mimeDecodedEmail ) {
     $config = GetConfig();
     $poster = NULL;
     $from = RemoveExtraCharactersInEmailAddress(trim($mimeDecodedEmail->headers["from"]));
+    $resentFrom = RemoveExtraCharactersInEmailAddress(trim($mimeDecodedEmail->headers["resent-from"]));
 
 	if ( empty($from) ) { 
         echo 'Invalid Sender - Emtpy! ';
@@ -644,7 +790,7 @@ function ValidatePoster( &$mimeDecodedEmail ) {
     $sql = 'SELECT id FROM '. $wpdb->users.' WHERE user_email=\'' . addslashes($from) . "' LIMIT 1;";
     $user_ID= $wpdb->get_var($sql);
     $user = new WP_User($user_ID);
-    if ($config["TURN_AUTHORIZATION_OFF"] || CheckEmailAddress($from)) {
+    if ($config["TURN_AUTHORIZATION_OFF"] || CheckEmailAddress($from) || CheckEmailAddress($resentFrom)) {
     	if (empty($user_ID)){
         	print("$from is authorized to post as the administrator\n");
        		$from = get_option("admin_email");
@@ -742,9 +888,27 @@ function FilterNewLines ( $content ) {
             'ACTUAL_NEW_LINE',
 			' '
 		);
-		// strip extra line breaks
-        $result = preg_replace($search,$replace,$content);
-        return(preg_replace('/ACTUAL_NEW_LINE/',"\n",$result));
+    // strip extra line breaks, and replace double line breaks with paragraph
+    // tags
+    $result = preg_replace($search,$replace,$content);
+    return('<p>' . preg_replace('/ACTUAL_NEW_LINE/',"<\/p>\n<p>",$result)
+        . '</p>');
+}
+function FixEmailQuotes ( $content ) {
+    # place e-mails quotes (indicated with >) in blockquote and pre tags
+		$search = array (
+			"/^>/"
+		);
+		$replace = array (
+            '<br />&gt;'
+		);
+    // strip extra line breaks, and replace double line breaks with paragraph
+    // tags
+    echo $content;
+    $result = preg_replace($search,$replace,$content);
+    //return('<p>' . preg_replace('/ACTUAL_NEW_LINE/',"<\/p>\n<p>",$result)
+        //. '</p>');
+    return($result);
 }
 
 //strip pgp stuff
@@ -789,6 +953,11 @@ function IsUTF8Blog() {
 function HandleMessageEncoding($encoding, $charset,&$body) {
     $charset = strtolower($charset);
     $encoding = strtolower($encoding);
+    /*
+    if ($encoding == '') {
+      $encoding = '7bit';
+    }
+    */
     HandleQuotedPrintable($encoding, $body);
     if (isISO88591Blog()) {
         ConvertToISO_8859_1($encoding,$charset,$body);
@@ -1185,15 +1354,16 @@ function GetRotation(&$mimeDecodedEmail,&$content) {
 function DeterminePostDate(&$content, $message_date = NULL) {
     $config = GetConfig();
     $delay = 0;
-    if (eregi("delay:([0-9dhm]+)",$content,$matches)
+    echo "inside Determine Post Date, message_date = $message_date\n";
+    if (eregi("delay:(-?[0-9dhm]+)",$content,$matches)
         && trim($matches[1])) {
-        if (eregi("([0-9]+)d",$matches[1],$dayMatches)) {
+        if (eregi("(-?[0-9]+)d",$matches[1],$dayMatches)) {
             $days = $dayMatches[1];
         }
-        if (eregi("([0-9]+)h",$matches[1],$hourMatches)) {
+        if (eregi("(-?[0-9]+)h",$matches[1],$hourMatches)) {
             $hours = $hourMatches[1];
         }
-        if (eregi("([0-9]+)m",$matches[1],$minuteMatches)) {
+        if (eregi("(-?[0-9]+)m",$matches[1],$minuteMatches)) {
             $minutes = $minuteMatches[1];
         }
         $delay = (($days * 24 + $hours) * 60 + $minutes) * 60;
@@ -1414,6 +1584,22 @@ function RemoveExtraCharactersInEmailAddress($address) {
     return($address);
 }
 
+/** 
+  * This function gleans the name from the 'from:' header if available. If not
+  * it just returns the username (everything before @)
+  */
+function GetNameFromEmail($address) {
+    $matches = array();
+    if (preg_match('/^([^<>]+)<([^<> ()]+)>$/',$address,$matches)) {
+        $name = $matches[1];
+    }
+    else if (preg_match('/<([^<>@ ()]+)>/',$address,$matches)) {
+        $name = $matches[1];
+    }
+
+    return($name);
+}
+
 /**
   * When sending in HTML email the html refers to the content-id(CID) of the image - this replaces
   * the cid place holder with the actual url of the image sent in
@@ -1523,6 +1709,8 @@ function GetPostCategories(&$subject) {
             print("Working on $match\n"); 
             //Work on the category search to see if we can determine the cat_id	
             //check the database to see if their is a category similar
+            /* this is for old category based scheme
+             *
             $sql_name = 'SELECT cat_ID 
                          FROM ' . $wpdb->categories. ' 
                          WHERE cat_name=\'' . addslashes($match) . '\'';
@@ -1532,8 +1720,22 @@ function GetPostCategories(&$subject) {
             $sql_sub_name = 'SELECT cat_ID 
                              FROM ' . $wpdb->categories. ' 
                              WHERE cat_name LIKE \'' . addslashes($match) . '%\' limit 1';
+           *
+           */
 
+            $sql_name = 'SELECT term_id 
+                         FROM ' . $wpdb->terms. ' 
+                         WHERE name=\'' . addslashes($match) . '\'';
+            $sql_id = 'SELECT term_id 
+                       FROM ' . $wpdb->terms. ' 
+                       WHERE term_id=\'' . addslashes($match) . '\'';
+            $sql_sub_name = 'SELECT term_id 
+                             FROM ' . $wpdb->terms. ' 
+                             WHERE name LIKE \'' . addslashes($match) . '%\' limit 1';
                 
+            //echo "sql_name query= $sql_name\n";
+            //$foobar = $wpdb->get_var($sql_name);
+            //echo "sql_name result= $foobar\n";
             if ( $category = $wpdb->get_var($sql_name) ) {
                 //then category is a named and found 
             } elseif ( $category = $wpdb->get_var($sql_id) ) {
@@ -1541,13 +1743,15 @@ function GetPostCategories(&$subject) {
             } elseif ( $category = $wpdb->get_var($sql_sub_name) ) {
                 //then cateogry is a start of a name and found
             }  
-        
+            //echo "the category is $category"; 
             if ($category) {
                 $post_categories[] = $category;
             }
+            //print_r($post_categories);
         }
     }
     if (!count($post_categories)) {
+        echo "using default category" . $config["DEFAULT_POST_CATEGORY"]. "\n";
         $post_categories[] =  $config["DEFAULT_POST_CATEGORY"];
     }
     return($post_categories);
@@ -1556,11 +1760,14 @@ function GetPostCategories(&$subject) {
   *This function just outputs a simple html report about what is being posted in
   */
 function DisplayEmailPost($details) {
+            print_r($details);
+            $theFinalContent=$details['post_content'];
+            echo "-----------the final content is:\n $theFinalContent\n";
             // Report
             print '</pre><p><b>Post Author</b>: ' . $details["post_author"]. '<br />' . "\n";
             print '<b>Date</b>: ' . $details["post_date"] . '<br />' . "\n";
             print '<b>Date GMT</b>: ' . $details["post_date_gmt"] . '<br />' . "\n";
-            foreach($details["post_categories"] as $category) {
+            foreach($details["post_category"] as $category) {
                 print '<b>Category</b>: ' . $category . '<br />' . "\n";
             }
             print '<b>Ping Status</b>: ' . $details["ping_status"] . '<br />' . "\n";
@@ -1783,6 +1990,8 @@ function GetDBConfig() {
     if (!isset($config["TIME_OFFSET"])) { $config["TIME_OFFSET"] =  get_option('gmt_offset'); }
     if (!isset($config["3GP_QT"])) { $config["3GP_QT"] =  true; }
     if (!isset($config["3GP_FFMPEG"])) { $config["3GP_FFMPEG"] = "/usr/bin/ffmpeg";}
+    if (!isset($config["WRAP_PRE"])) { $config["WRAP_PRE"] =  'no'; }
+    if (!isset($config["ADD_META"])) { $config["ADD_META"] =  'no'; }
     return($config);
 }
 /**

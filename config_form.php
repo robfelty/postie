@@ -134,10 +134,10 @@ $messages[2] = "Error - unable to save configuration";
                 <th scope="row"><?php _e('Default post by mail category:') ?></th>
                 <td><select name="DEFAULT_POST_CATEGORY" id="DEFAULT_POST_CATEGORY">
                         <?php
-                        $categories = $wpdb->get_results("SELECT * FROM $wpdb->categories ORDER BY cat_name");
+                        $categories = $wpdb->get_results("SELECT * FROM $wpdb->terms ORDER BY name");
                         foreach ($categories as $category) {
-                            $selected = ($category->cat_ID == $config["DEFAULT_POST_CATEGORY"] ? "SELECTED": NULL); 
-                            echo "\n\t<option value='$category->cat_ID' $selected>$category->cat_name</option>";
+                            $selected = ($category->term_id == $config["DEFAULT_POST_CATEGORY"] ? "SELECTED": NULL); 
+                            echo "\n\t<option value='$category->term_id' $selected>$category->name</option>";
                         }
                         ?>
                 </select></td>
@@ -158,6 +158,28 @@ $messages[2] = "Error - unable to save configuration";
         <option value="html" <?php if($config["PREFER_TEXT_TYPE"] == "html") { echo "SELECTED";} ?>>html</option>
         </select><br />
                 <?php _e("Recommended");?>: <code>plain</code>
+                <br />
+                </td> 
+            </tr> 
+            <tr> 
+                <th width="33%" valign="top" scope="row"><?php _e('Wrap content in pre tags:') ?> </th> 
+                <td>
+                <select name="WRAP_PRE" id="WRAP_PRE">
+                <option value="no">no</option>
+                <option value="yes" <?php if($config["WRAP_PRE"] == "yes") { echo "SELECTED";} ?>>yes</option>
+                </select><br />
+                <?php _e("Recommended");?>: <code>no</code>
+                <br />
+                </td> 
+            </tr> 
+            <tr> 
+                <th width="33%" valign="top" scope="row"><?php _e('Add more meta information right before post:') ?> </th> 
+                <td>
+                <select name="ADD_META" id="ADD_META">
+                <option value="no">no</option>
+                <option value="yes" <?php if($config["ADD_META"] == "yes") { echo "SELECTED";} ?>>yes</option>
+                </select><br />
+                <?php _e("Recommended");?>: <code>no</code>
                 <br />
                 </td> 
             </tr> 

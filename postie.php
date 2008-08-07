@@ -3,8 +3,8 @@
 Plugin Name: Postie
 Plugin URI: http://www.economysizegeek.com/?page_id=395
 Description: Signifigantly upgrades the posting by mail features of Word Press (See <a href="../wp-content/plugins/postie/postie.php?postie_read_me=1">Quick Readme</a>)
-Version: 1.1.1
-Author: Dirk Elmendorf
+Version: 1.1.2
+Author: Robert Felty (v. 1.1.1 from Dirk Elmendorf)
 Author URI: http://www.economysizegeek.com/
 */
 
